@@ -1,0 +1,273 @@
+#!/usr/bin/perl
+use strict;
+
+#This script should run and either reconfigure teh box for dual homing (if needed) or do nothing (if already done)
+#
+#Broadly
+# /etc/iproute2/rt_tables 
+# - needs entries for each interface
+#
+#/sbin/ip route add default via (default gateway for eth0) table eth0
+#/sbin/ip route add default via (default gateway for eth1) table eth1
+#/sbin/ip rule add from (ip of eth0) table eth0
+#/sbin/ip rule add from (ip of eth1) table eth1
+#/sbin/ip rule add iif eth0 table eth0
+#/sbin/ip rule add iif eth1 table eth1
+#/sbin/ip rule add oif eth0 table eth0
+#/sbin/ip rule add oif eth1 table eth1
+
+my $logLevel = 2;
+
+my $IP = "/sbin/ip";
+
+# First enumerate interfaces
+
+sub execute($) {
+    my ($cmd) = @_;
+    print("RUNNING: $cmd\n") if ($logLevel >= 1);
+    open(RUN, "$cmd 2>&1|");
+    while (<RUN>) {
+        chomp;
+        debug($_);
+    }
+    close(RUN);
+}
+sub warning($) {
+    my ($msg) = @_;
+    print("WARNING: $msg\n") if ($logLevel >= 3);
+}
+    
+sub summ($) {
+    my ($msg) = @_;
+    print("SUMM: $msg\n") if ($logLevel >= 2);
+}
+sub info($) {
+    my ($msg) = @_;
+    print("INFO: $msg\n") if ($logLevel >= 4);
+}
+sub debug($) {
+    my ($msg) = @_;
+    print("DEBUG: $msg\n") if ($logLevel >= 5);
+}
+
+my $ints = {};
+
+my $cmd = "$IP -o a";
+open(C, "$cmd|");
+while (<C>) {
+    next unless /: ([^ ]+) +inet ([0-9.]+)\/([0-9]+) /;
+    my ($int, $ip, $subnet) = ($1, $2, $3);
+    next if ($int =~ /^lo/);
+    info("$ip /$subnet on $int");
+    $ints->{$int}->{ip} = $ip;
+    $ints->{$int}->{subnet} = $subnet;
+}
+close(C);
+
+# Check tables
+open(RT, "/etc/iproute2/rt_tables");
+my $tables = {};
+while (<RT>) {
+    chomp;
+    s/#.*//;
+    next unless /./;
+    my ($num, $int) = split(/[	 ]+/g);
+    debug("Table $int = table $num");
+    $tables->{byint}->{$int} = $num;
+    $tables->{bynum}->{$num} = $int;
+}
+close(RT);
+
+
+foreach my $int (sort keys %{$ints}) {
+    if (!defined($tables->{byint}->{$int})) {
+        for (my $i = 201; $i < 250; $i++) {
+            if (!defined($tables->{bynum}->{$i})) {
+                debug("ADD $int to tables as $i");
+                open(RT, ">>/etc/iproute2/rt_tables");
+                print(RT "$i	$int");
+                close(RT);
+                $tables->{bynum}->{$i} = $int;
+                last;
+            }
+        }
+    }
+}
+
+
+# 32763:	from all oif eno2 lookup eno2 
+# 32764:	from all iif eno2 lookup eno2 
+# 32765:	from 192.168.26.101 lookup eno2 
+
+my $rule;
+
+open(RULE, "$IP rule|");
+while (<RULE>) {
+    chomp;
+    debug("RULE: $_");
+    if (/from all (.if) ([^ ]*) lookup ([^ ]*)/) {
+        my $xif = $1; my $int = $2; my $tab = $3;
+        info("$xif rule for $int $tab exists");
+        $rule->{$xif}->{$tab} = $int;
+    }
+    if (/from ([0-9.]*) lookup ([^ ]*)/) {
+        my $ip = $1; my $tab = $2;
+        info("IP rule for $ip via $tab exists");
+        $rule->{ip}->{$ip} = $tab;
+    }
+}
+close(RULE);
+
+# Add rules for interfaces->table mapping *if the rules don't exist*
+#/sbin/ip rule add from (ip of eth0) table eth0
+#/sbin/ip rule add iif eth0 table eth0
+#/sbin/ip rule add oif eth0 table eth0
+
+
+foreach my $int (sort keys %{$tables->{byint}}) {
+    my $ip = $ints->{$int}->{ip};
+    if ($ip =~ /[0-9]/) {
+        if ($rule->{ip}->{$ip} eq $int) {
+            info("# ip $ip table $int exists");
+        } else {
+            execute("$IP rule add from $ip table $int");
+        }
+        if ($rule->{iif}->{$int} eq $int) {
+            info("# iif $int table $int exists");
+        } else {
+            execute("$IP rule add iif $int table $int");
+        }
+        if ($rule->{oif}->{$int} eq $int) {
+            info("# oif $int table $int exists");
+        } else {
+            execute("$IP rule add oif $int table $int");
+        }
+    }
+}
+# Add default gateway to tables
+#/sbin/ip route add default via (default gateway for eth0) table eth0
+
+# Gateway could be in /etc/network/interfaces
+# Or could be in dhcp lease table
+
+my $inInt = "";
+my $nextInterfaceDefault = 0;
+my $gw = {};
+
+# choose desired default interface
+my $desiredDefaultInterface = "";
+
+open(INT, "/etc/network/interfaces");
+while (<INT>) {
+    if (/# The primary network interface/) {
+        debug("Will choose the next interface for default gateway if possible");
+        $nextInterfaceDefault = 1;
+    }
+    if (/iface ([^ ]+) inet dhcp/) {
+        $inInt = $1;
+        $gw->{$inInt} = "dhcp";
+        if ($nextInterfaceDefault) { 
+            $desiredDefaultInterface = $inInt;
+            $nextInterfaceDefault = 0;
+        }
+        $inInt = "";
+    } elsif (/iface ([^ ]+) inet static/) {
+        $inInt = $1;
+        if ($nextInterfaceDefault) { 
+            $desiredDefaultInterface = $inInt;
+            $nextInterfaceDefault = 0;
+        }
+    }
+    if (/gateway ([^ ]+)/) {
+        $gw->{$inInt} = $1;
+    }
+}
+close(INT);
+
+foreach my $int (sort keys %{$tables->{byint}}) {
+    my $ip = $ints->{$int}->{ip};
+    my $gwip = $gw->{$int};
+    if ($ip =~ /[0-9]/) {
+        if ($gwip eq "dhcp") {
+            if (-f "/var/lib/dhcp/dhclient.$int.leases") {
+                open(L, "/var/lib/dhcp/dhclient.$int.leases");
+                while(<L>) {
+                    if (/option routers ([0-9.]+)/) {
+                        $gwip = $1;
+                    }
+                }
+                close(L);
+            } else {
+                warning("Can't find DHCP lease for $int")
+            }
+        }
+        info ("Int $int IP $ip GW=$gwip");
+        if ($gwip =~ /[0-9]/) {
+            #/sbin/ip route add default via (default gateway for eth0) table eth0
+            # If route isn't right, delete it
+            my $routeOK = 0;
+            open(RT, "$IP route list table $int|");
+            while(<RT>) {
+                chomp;
+                if (/default via $gwip dev $int/) {
+                    $routeOK = 1;
+                    info("Route for $int via $gwip is OK");
+                }
+            }
+            close(RT);
+            if ($routeOK == 0) {
+                execute("$IP route del default table $int");
+                execute("$IP route add default via $gwip table $int");
+            }
+        } else {
+            warning("Can't find gateway for $int / $ip");
+        }
+    } else {
+        if ($int =~ /[0-9]/) {
+            # real interface
+            info("$int doesn't have an IP");
+        } else {
+            debug("$int doesn't have an IP");
+        }
+    }
+}
+
+# Fianlly summarise the current state
+open(RT, "$IP route list|");
+while(<RT>) {
+    if (/default via ([0-9.]+) dev ([^ ]+)/) {
+        my $defgw = $1;
+        my $defint = $2;
+        my $ip = $ints->{$defint}->{ip};
+        if ($desiredDefaultInterface =~ /../) {
+            debug("We'd like to use $desiredDefaultInterface as default gateway for non tabled packets");
+            if ($defint eq $desiredDefaultInterface) {
+                debug("And we are using $defint as default gateay!");
+            } else {
+                info("Replacing default gateway with $$desiredDefaultInterface");
+                execute("$IP route change default via 192.168.26.1");
+            }
+        }
+        summ("DFLT: Default gateway via $defgw on $defint/$ip");
+    } elsif (/([0-9.]+) dev ([^ ]+) .*src ([0-9.]+)/) {
+        my ($net, $int, $ip) = ($1, $2, $3);
+        summ("DFLT: Directly connected $net on $int/$ip");
+    }
+}
+close(RT);
+foreach my $tab (sort keys %{$tables->{byint}}) {
+    next unless defined($ints->{$tab}->{ip});
+    open(RT, "$IP route list table $tab|");
+    while(<RT>) {
+        if (/default via ([0-9.]+) dev ([^ ]+)/) {
+            my $defgw = $1;
+            my $defint = $2;
+            my $ip = $ints->{$defint}->{ip};
+            summ("$tab: Gateway via $defgw on $defint/$ip");
+        } elsif (/([0-9.]+) dev ([^ ]+) .*src ([0-9.]+)/) {
+            my ($net, $int, $ip) = ($1, $2, $3);
+            summ("$tab: Directly connected $net on $int/$ip");
+        }
+    }
+    close(RT);
+}

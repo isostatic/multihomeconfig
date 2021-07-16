@@ -1,0 +1,17 @@
+A quick script to run on a machine with /etc/network/interfaces which enables multirouting
+
+ - traffic in/out of each interface sits in it's own table with the router specified in /etc/network/interfaces or received via dhclient and in the lease table
+ - traffic orginating without a specific interface will use the default table
+ - if /etc/network/interfaces has a line with
+
+    # The primary network interface
+
+   the default route, otherwise it's whatever the normal behavior is (interface that comes up first perhaps?)
+
+script can be run as often as needed, and will change things if needed, so it sits in dhclient
+
+Only tested for specific use cases
+
+ - machine with 2 interfaces both on dhcp
+
+I suspect netplan has a way to do this properly for more recent ubuntu versions
