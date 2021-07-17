@@ -16,7 +16,7 @@ use strict;
 #/sbin/ip rule add oif eth0 table eth0
 #/sbin/ip rule add oif eth1 table eth1
 
-my $logLevel = 2;
+my $logLevel = 5;
 
 my $IP = "/sbin/ip";
 
@@ -244,7 +244,7 @@ while(<RT>) {
             if ($defint eq $desiredDefaultInterface) {
                 debug("And we are using $defint as default gateay!");
             } else {
-                info("Replacing default gateway with $$desiredDefaultInterface");
+                info("Replacing default gateway with $desiredDefaultInterface");
                 execute("$IP route change default via 192.168.26.1");
             }
         }
