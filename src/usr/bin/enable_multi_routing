@@ -85,7 +85,7 @@ foreach my $int (sort keys %{$ints}) {
             if (!defined($tables->{bynum}->{$i})) {
                 debug("ADD $int to tables as $i");
                 open(RT, ">>/etc/iproute2/rt_tables");
-                print(RT "$i	$int");
+                print(RT "$i	$int\n");
                 close(RT);
                 $tables->{bynum}->{$i} = $int;
                 last;
@@ -178,7 +178,7 @@ while (<INT>) {
             $nextInterfaceDefault = 0;
         }
     }
-    if (/gateway ([^ ]+)/) {
+    if (/gateway ([^\s]+)/) {
         $gw->{$inInt} = $1;
     }
 }
