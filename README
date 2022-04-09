@@ -15,3 +15,8 @@ Only tested for specific use cases
  - machine with 2 interfaces both on dhcp
 
 I suspect netplan has a way to do this properly for more recent ubuntu versions
+
+    wget https://raw.githubusercontent.com/isostatic/multihomeconfig/main/src/usr/bin/enable_multi_routing
+    chmod 755 enable_multi_routing
+    sudo ./enable_multi_routing
+
