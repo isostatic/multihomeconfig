@@ -14,4 +14,11 @@ Only tested for specific use cases
 
  - machine with 2 interfaces both on dhcp
 
-I suspect netplan has a way to do this properly for more recent ubuntu versions
+I suspect netplan has a way to do this properly for more recent ubuntu versions, although iif and oif seem to struggle in my initial tests
+
+
+To apply
+    wget https://raw.githubusercontent.com/isostatic/multihomeconfig/main/src/usr/bin/enable_multi_routing
+    chmod 755 enable_multi_routing
+    sudo mv enable_multi_routing /usr/bin/
+    echo /usr/bin/enable_multi_routing | sudo tee /etc/dhcp/dhclient-exit-hooks.d/enable_multi_routing
