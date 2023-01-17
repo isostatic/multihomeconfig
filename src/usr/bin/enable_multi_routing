@@ -192,6 +192,8 @@ foreach my $int (sort keys %{$tables->{byint}}) {
             if (-f "/var/lib/dhcp/dhclient.$int.leases") {
                 open(L, "/var/lib/dhcp/dhclient.$int.leases");
                 while(<L>) {
+		    # Remove commented lines
+		    s/#.*//;
                     if (/option routers ([0-9.]+)/) {
                         $gwip = $1;
                     }
